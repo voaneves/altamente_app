@@ -1,0 +1,135 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required) - The unique identifier for the user.
+    //   - role: string (required) - 'professor', 'pai', or 'admin'.
+    //   - email: string (required) - The user's email address.
+    //   - name: string (required) - The user's display name.
+    //   - filhos: list of strings (optional) - List of student names associated with this parent.
+    //
+    // Collection: registros
+    // Document ID: {registroId}
+    // Fields:
+    //   - dataHora: timestamp (required) - The date and time the record was created.
+    //   - nomeAluno: string (required) - The name of the student being observed.
+    //   - habilidadeAlvo: string (required) - The target skill being tracked.
+    //   - nivelSucesso: string (required) - The level of success achieved.
+    //   - observacoes: string (optional) - Optional observations made by the professor.
+    //   - authorUid: string (required) - The UID of the professor who created the record.
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == request.auth.uid;
+    }
+    
+    function uidNotModified() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == resource.data.uid;
+    }
+    
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+    
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "victorneves478@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isProfessor() {
+      return isAuthenticated() &&
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'professor');
+    }
+
+    function isPai() {
+      return isAuthenticated() &&
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'pai');
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      let allowedKeys = ['uid', 'role', 'email', 'name', 'filhos'];
+      return request.resource.data.keys().hasOnly(allowedKeys) &&
+             hasRequiredFields(['uid', 'role', 'email', 'name']) &&
+             data.uid is string && data.uid.size() > 0 && data.uid.size() < 100 &&
+             data.role in ['professor', 'pai', 'admin'] &&
+             isValidEmail(data.email) && data.email.size() < 100 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             (!('filhos' in data) || (data.filhos is list && data.filhos.size() <= 20));
+    }
+
+    function isValidRegistro(data) {
+      let allowedKeys = ['dataHora', 'nomeAluno', 'habilidadeAlvo', 'nivelSucesso', 'observacoes', 'authorUid'];
+      return request.resource.data.keys().hasOnly(allowedKeys) &&
+             hasRequiredFields(['dataHora', 'nomeAluno', 'habilidadeAlvo', 'nivelSucesso', 'authorUid']) &&
+             data.dataHora is timestamp &&
+             data.nomeAluno is string && data.nomeAluno.size() > 0 && data.nomeAluno.size() < 100 &&
+             data.habilidadeAlvo is string && data.habilidadeAlvo.size() > 0 && data.habilidadeAlvo.size() < 100 &&
+             data.nivelSucesso is string && data.nivelSucesso.size() > 0 && data.nivelSucesso.size() < 100 &&
+             data.authorUid is string && data.authorUid.size() > 0 && data.authorUid.size() < 100 &&
+             (!('observacoes' in data) || (data.observacoes is string && data.observacoes.size() <= 1000));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && 
+                    ((isOwner(userId) && request.resource.data.role in ['pai', 'professor']) || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
+                    ((isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /registros/{registroId} {
+      allow read: if isAdmin() || 
+                  (isProfessor() && resource.data.authorUid == request.auth.uid) ||
+                  (isPai() && 'filhos' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data && resource.data.nomeAluno in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.filhos);
+      
+      allow create: if isAuthenticated() && isProfessor() && 
+                    isValidRegistro(request.resource.data) && 
+                    request.resource.data.authorUid == request.auth.uid;
+                    
+      allow update: if isAuthenticated() && isProfessor() && 
+                    isValidRegistro(request.resource.data) && 
+                    resource.data.authorUid == request.auth.uid && 
+                    request.resource.data.authorUid == resource.data.authorUid;
+                    
+      allow delete: if isAdmin() || (isProfessor() && resource.data.authorUid == request.auth.uid);
+    }
+  }
+}
