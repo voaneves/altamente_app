@@ -21,5 +21,26 @@ export default defineConfig(({mode}) => {
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
     },
+    build: {
+      chunkSizeWarningLimit: 1000,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            vendor: ['react', 'react-dom'],
+            firebase: ['firebase/app', 'firebase/auth', 'firebase/firestore'],
+            ui: ['lucide-react', 'motion', 'recharts', 'canvas-confetti'],
+            capacitor: [
+              '@capacitor/core', 
+              '@capacitor/camera', 
+              '@capacitor/haptics', 
+              '@capacitor/push-notifications', 
+              '@capacitor/splash-screen', 
+              '@codetrix-studio/capacitor-google-auth', 
+              '@ionic/pwa-elements'
+            ]
+          },
+        },
+      },
+    },
   };
 });
